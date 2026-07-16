@@ -1,0 +1,11 @@
+# Claude Code's per-machine local settings — contains local file paths and
+# tool-permission state specific to this machine, not project config.
+.claude/
+
+# Python
+__pycache__/
+*.pyc
+
+# OS cruft
+.DS_Store
+Thumbs.db

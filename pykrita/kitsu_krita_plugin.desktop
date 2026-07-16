@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Service
+ServiceTypes=Krita/PythonPlugin
+X-KDE-Library=kitsu_krita_plugin
+X-Python-2-Compatible=false
+Name=Kitsu Krita Plugin
+Comment=Connect Krita to a Kitsu/Zou instance for task detection, feedback, and publishing.
+X-Krita-Manual=manual.html

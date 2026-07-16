@@ -1,0 +1,151 @@
+<h2>Kitsu Krita Plugin</h2>
+<p>Connects Krita to a self-hosted Kitsu/Zou (CG Wire) instance: detects the
+task a document belongs to from its folder structure, shows feedback and
+comments (including overpaint attachments), and publishes new versions
+with a comment and status change.</p>
+
+<h3>Where to find it</h3>
+<ul>
+  <li>Menu: <b>Kitsu/Zou</b> (top-level menu, next to Help)</li>
+  <li>Or: <b>Settings &rarr; Dockers &rarr; Kitsu</b></li>
+</ul>
+
+<h3>Collapsing sections</h3>
+<p>Each section's title (Connection, Task, Feedback, Publish) is
+clickable and collapses/expands that section &mdash; useful for
+reclaiming space for other dockers like Layers or brush presets once you
+don't need a section visible. The collapsed/expanded state is
+remembered per section across restarts.</p>
+
+<h3>Setup</h3>
+<ol>
+  <li>Open the Kitsu dock and enter your server URL (e.g.
+      <code>https://kitsu.yourstudio.com</code>), your email + password (or
+      an API token), and the project ID.</li>
+  <li>Click <b>Login</b>. The server URL is normalized to end in
+      <code>/api</code> automatically.</li>
+  <li>If login fails, the dock shows the specific reason (rejected
+      credentials, a 404 route, a server error) instead of a generic
+      failure message. A 404 usually means the Zou API for this Kitsu
+      instance lives at a different host/path than the web UI — ask
+      whoever administers the server for the correct API URL.</li>
+  <li>Once logged in, the project's <b>thumbnail and name</b> appear at
+      the top of the <b>Task</b> section (the thumbnail only if the
+      project has one set on Kitsu). Editing the Project ID afterwards
+      clears both until you log in again.</li>
+  <li>Below the Login button, your own avatar and a "Welcome,
+      &lt;name&gt;" greeting appear once logged in. Editing the Email or
+      API token field afterwards clears both, since a different account
+      may be about to log in.</li>
+  <li>After logging in with email/password, the plugin saves the JWT
+      <b>refresh token</b> Kitsu issued (not your password) and uses it to
+      silently restore the session next time you open Krita &mdash; no
+      re-entering your password every launch. It's bounded and revocable
+      (expires ~15 days after login by default) and can't change the
+      account's password or email. If it's expired or invalid, the dock
+      shows a clear message and falls back to asking you to log in
+      again.</li>
+</ol>
+
+<h3>Task detection</h3>
+<p>Click <b>Detect task from current document</b> in the dock. Two folder
+structures are supported &mdash; assets are tried first, then shots
+&mdash; matched case-insensitively against Kitsu's names:</p>
+<ul>
+  <li><b>Assets</b>:
+      <code>.../&lt;AssetType&gt;/&lt;Asset&gt;/&lt;TaskType&gt;/file.kra</code>,
+      e.g. <code>assets/characters/Hero/design/Hero_design_v002.kra</code>.</li>
+  <li><b>Shots</b>:
+      <code>.../&lt;Sequence&gt;/&lt;Shot&gt;/&lt;TaskType&gt;/file.kra</code>
+      for movies/shorts/commercials, e.g.
+      <code>sequences/SEQ01/SH010/animation/SH010_anim_v002.kra</code>. For
+      a TV series, an episode level goes in front &mdash;
+      <code>.../&lt;Episode&gt;/&lt;Sequence&gt;/&lt;Shot&gt;/&lt;TaskType&gt;/file.kra</code>
+      &mdash; but only if two episodes reuse the same sequence name; if
+      sequence names are unique in your project, the plain shot path
+      already resolves without it.</li>
+</ul>
+<p>If neither matches, the error message names exactly what was checked
+(asset types, sequences, episodes) so you can tell which folder level is
+off.</p>
+
+<h3>Task status, due date &amp; timesheet</h3>
+<p>Once a task is detected, its <b>status</b> and <b>due date</b> show
+below it (if set on Kitsu), along with a <b>timesheet</b>: a slider from
+0 to 12 hours (0.5h steps) plus 1h/4h/8h preset buttons, pre-filled with
+whatever you've already logged today. Click <b>Submit Time</b> to set
+today's total on Kitsu &mdash; submitting again with a different value
+replaces today's total rather than adding to it.</p>
+<p>The slider also <b>advances on its own</b> once you're logged in
+&mdash; 1 real hour after login it's at 1h, 2 hours later 2h, and so on
+up to the 12h cap. Dragging it or clicking a preset button overrides
+this at any time; auto-advance then continues climbing from that value
+instead of fighting your choice. Switching to a <i>different</i> task
+resets it to that task's already-logged time for today &mdash; but
+clicking Detect Task again for the <i>same</i> task leaves the running
+clock untouched. This only updates the on-screen slider &mdash; it never
+contacts Kitsu until you click Submit Time.</p>
+
+<h3>Feedback</h3>
+<p>Comments for the detected task are listed in the Feedback section,
+each shown as <code>Status - Person: comment text</code> &mdash; or, when
+that comment published a new revision (e.g. via this plugin's Publish
+button), <code>Revision N - Status - Person: comment text</code>, so a
+new version stands out from a plain comment at a glance.</p>
+<p>The area below the comment list stays hidden when the selected comment
+has no checklist, revisions, or attachments. Otherwise, select a comment
+to see, below the list:</p>
+<ul>
+  <li>Its <b>checklist</b>, if it has one, as tickable checkboxes &mdash;
+      ticking/unticking syncs to Kitsu immediately. If the sync fails,
+      the checkbox reverts and you'll see a warning, so it never shows a
+      checked state that wasn't actually saved.</li>
+  <li>Its <b>revisions</b>, embedded inline, with any Kitsu
+      <b>drawover</b> (shapes/arrows/freehand markup/text notes from a
+      review session) composited directly on the image, labeled "(with
+      drawover)". If present, click <b>Add drawover to canvas as a
+      layer</b> to place it on your current document as a new
+      transparent layer named <code>Feedback_&lt;revision&gt;</code>,
+      scaled to your document's current resolution. Clicking it again
+      for the same revision replaces that layer instead of stacking
+      duplicates.</li>
+  <li>Its <b>attachments</b> (other reference images), embedded
+      inline. Click <b>Save attachment(s) to disk</b> for a local copy,
+      e.g. to open in Krita and paint over it.</li>
+</ul>
+<p>Drawover rendering covers everything Kitsu's own drawover toolbar
+produces (rectangles, circles, arrows, freehand strokes, text). Not yet
+supported: the eraser tool, nested groups, and rotation on freehand
+strokes/lines/arrows specifically.</p>
+
+<h3>Publishing</h3>
+<p>Pick a status, write a comment, and click <b>Publish</b>. The plugin
+exports the current canvas to a temporary PNG and publishes it as a
+proper Kitsu preview/revision (not just a plain comment attachment), so
+it appears in the task's version history and can be drawn over in review
+sessions. If the Krita filename ends in a <code>_v###</code>-style
+version (e.g. <code>Hero_design_v002.kra</code>), that number becomes the
+revision number on Kitsu too.</p>
+<p>To publish <b>multiple images for the same revision</b> (e.g. two
+variations with different layers toggled on/off), toggle your layers and
+click <b>Add Image</b> for each variation before clicking Publish &mdash;
+queued images are listed above the Publish button. The current canvas
+becomes the main image and the queued ones attach as extra previews on
+that <i>same</i> revision (not plain, unversioned attachments), so they
+all show up together under that one revision and each supports its own
+drawover. <b>Clear</b> empties the queue; it also clears automatically
+after a successful publish.</p>
+
+<h3>Security note</h3>
+<p>Your password is never written to disk. What is persisted between
+Krita restarts: the server URL, email, project ID, an optional API
+token, and &mdash; after a successful email/password login &mdash; the
+JWT refresh token Kitsu issued, which is what lets the plugin restore
+your session on the next launch without asking for the password again.
+That token is bounded and revocable (expires ~15 days after login by
+default) and can't change the account's password or email.</p>
+
+<h3>Troubleshooting</h3>
+<p>To see Python errors from this plugin, run Krita from a terminal: on
+Windows, launch <code>krita.com</code> (not <code>krita.exe</code>) from
+a command prompt — errors will print there instead of being silent.</p>
