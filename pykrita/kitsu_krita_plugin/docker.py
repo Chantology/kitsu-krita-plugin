@@ -50,18 +50,20 @@ class KitsuDocker(DockWidget):
         self._preview_cache = {}  # preview (revision) id -> local file path
         self._pending_publish_images = []  # image paths queued to publish (first = main preview, rest = variations)
 
-        # Timesheet auto-advance: `_timesheet_elapsed_minutes` is a
-        # fine-grained running total (kept separate from the slider's
-        # discrete half-hour steps so ticks never lose sub-step progress
-        # to rounding), rebased to a new starting point whenever the user
-        # manually changes the slider or a *different* task is loaded.
+        # Timesheet auto-advance: while active, the slider auto-advances
+        # from `_time_tracking_base_minutes` (today's already-logged time
+        # as of the last server sync) by however many minutes have elapsed
+        # since `_time_tracking_start`. Any manual slider interaction turns
+        # it off until the next task (re-)detection or a successful submit
+        # restarts it -- matching the Blender/Maya/Houdini/Nuke/C4D ports.
         # `_timesheet_loaded_task_id` lets re-detecting the same task (e.g.
         # clicking "Detect Task" again) leave the running clock alone.
-        self._timesheet_elapsed_minutes = 0.0
-        self._timesheet_last_tick = None
+        self._time_tracking_active = False
+        self._time_tracking_base_minutes = 0
+        self._time_tracking_start = None
         self._timesheet_loaded_task_id = None
         self._timesheet_timer = QTimer(self)
-        self._timesheet_timer.setInterval(60_000)  # 1 minute — see _on_timesheet_tick
+        self._timesheet_timer.setInterval(30_000)  # 30s: plenty for minute-level display
         self._timesheet_timer.timeout.connect(self._on_timesheet_tick)
 
         root = QWidget(self)
@@ -183,6 +185,10 @@ class KitsuDocker(DockWidget):
 
         return group
 
+    _TIME_SLIDER_MAX_MINUTES = 12 * 60
+    _TIME_SLIDER_STEP_MINUTES = 30
+    _TIME_PRESETS_MINUTES = (60, 240, 480)  # 1h, 4h, 8h
+
     def _build_timesheet_widget(self):
         widget = QWidget()
         layout = QVBoxLayout(widget)
@@ -193,22 +199,27 @@ class KitsuDocker(DockWidget):
 
         self.timesheet_slider = QSlider(Qt.Horizontal)
         self.timesheet_slider.setMinimum(0)
-        self.timesheet_slider.setMaximum(24)  # half-hour units: 0..12h
-        self.timesheet_slider.setSingleStep(1)
-        self.timesheet_slider.setPageStep(2)
-        self.timesheet_slider.setTickInterval(2)
+        self.timesheet_slider.setMaximum(self._TIME_SLIDER_MAX_MINUTES)
+        self.timesheet_slider.setSingleStep(self._TIME_SLIDER_STEP_MINUTES)
+        self.timesheet_slider.setPageStep(self._TIME_SLIDER_STEP_MINUTES * 2)
+        self.timesheet_slider.setTickInterval(self._TIME_SLIDER_STEP_MINUTES * 2)
         self.timesheet_slider.setTickPosition(QSlider.TicksBelow)
         self.timesheet_slider.valueChanged.connect(self._on_timesheet_slider_changed)
+        # actionTriggered fires only for user-driven changes (drag,
+        # arrow/page keys, click-to-page) — never for our own setValue()
+        # calls — so this is what turns off auto-tracking the moment the
+        # user actually touches the slider themselves.
+        self.timesheet_slider.actionTriggered.connect(self._on_timesheet_slider_user_interacted)
         layout.addWidget(self.timesheet_slider)
 
-        self.timesheet_value_label = QLabel("Selected: 0.0h")
+        self.timesheet_value_label = QLabel("Selected: 0h 0m")
         layout.addWidget(self.timesheet_value_label)
 
         presets_layout = QHBoxLayout()
-        for hours in (1, 4, 8):
-            button = QPushButton(f"{hours}h")
+        for minutes in self._TIME_PRESETS_MINUTES:
+            button = QPushButton(self._format_minutes(minutes))
             button.clicked.connect(
-                lambda _checked, h=hours: self.timesheet_slider.setValue(h * 2)
+                lambda _checked=False, m=minutes: self._apply_timesheet_preset(m)
             )
             presets_layout.addWidget(button)
         layout.addLayout(presets_layout)
@@ -218,6 +229,10 @@ class KitsuDocker(DockWidget):
         layout.addWidget(self.timesheet_submit_button)
 
         return widget
+
+    def _format_minutes(self, minutes):
+        hours, remaining_minutes = divmod(int(minutes), 60)
+        return f"{hours}h {remaining_minutes}m"
 
     def _build_feedback_group(self):
         group = QWidget()
@@ -640,36 +655,61 @@ class KitsuDocker(DockWidget):
 
     # ---- timesheet ----
 
-    def _on_timesheet_slider_changed(self, value):
-        # Only reached for genuine user-driven changes (dragging, clicking
-        # the track, a preset button) — _on_timesheet_tick sets the slider
-        # with signals blocked specifically so it doesn't loop back here.
-        # A manual change rebases the auto-advance clock to start counting
-        # up from *this* value instead of fighting the user's choice.
-        self.timesheet_value_label.setText(f"Selected: {value / 2:.1f}h")
-        self._timesheet_elapsed_minutes = value * 30
-        self._timesheet_last_tick = time.monotonic()
+    def _on_timesheet_slider_changed(self, minutes):
+        suffix = " (auto)" if self._time_tracking_active else ""
+        self.timesheet_value_label.setText(f"Selected: {self._format_minutes(minutes)}{suffix}")
+
+    def _on_timesheet_slider_user_interacted(self, _action):
+        # The user just dragged/keyed the slider themselves — stop
+        # auto-advancing so it doesn't fight their manual choice; it
+        # resumes on the next task (re-)detection or a successful submit.
+        # actionTriggered fires *before* Qt applies the action's value
+        # change, so the label refresh (to drop the "(auto)" suffix) is
+        # deferred to right after — otherwise a user action that doesn't
+        # actually change the value would leave the stale "(auto)" suffix
+        # showing indefinitely, since no valueChanged would follow to
+        # refresh it.
+        self._time_tracking_active = False
+        QTimer.singleShot(
+            0, lambda: self._on_timesheet_slider_changed(self.timesheet_slider.value())
+        )
+
+    def _apply_timesheet_preset(self, minutes):
+        # A preset button is just as much a manual override as dragging
+        # the slider — setValue() alone wouldn't turn tracking off (it
+        # doesn't fire actionTriggered), so this does it explicitly. The
+        # label refresh below is unconditional (not left to valueChanged)
+        # since setValue() is a no-op — no signal at all — if the preset
+        # happens to match the slider's current value already.
+        self._time_tracking_active = False
+        self.timesheet_slider.setValue(minutes)
+        self._on_timesheet_slider_changed(self.timesheet_slider.value())
+
+    def _start_time_tracking(self, base_minutes):
+        """(Re)start auto-advancing the slider from `base_minutes` (the
+        already-logged time as of now) — called on every task
+        (re-)detection, so the slider always resumes counting up from the
+        latest known-good total. Sets the slider to `base_minutes` itself
+        (capped to its 12h range), so callers don't need their own
+        separate setValue step."""
+        self._time_tracking_active = True
+        self._time_tracking_base_minutes = base_minutes
+        self._time_tracking_start = time.monotonic()
+
+        self.timesheet_slider.blockSignals(True)
+        self.timesheet_slider.setValue(min(int(base_minutes), self._TIME_SLIDER_MAX_MINUTES))
+        self.timesheet_slider.blockSignals(False)
+        self._on_timesheet_slider_changed(self.timesheet_slider.value())
 
     def _on_timesheet_tick(self):
-        if self.task is None:
-            return  # nothing to log time against right now
-
-        now = time.monotonic()
-        if self._timesheet_last_tick is not None:
-            self._timesheet_elapsed_minutes += (now - self._timesheet_last_tick) / 60
-        self._timesheet_last_tick = now
-
-        units = min(round(self._timesheet_elapsed_minutes / 30), self.timesheet_slider.maximum())
-        if units == self.timesheet_slider.value():
+        if not self._time_tracking_active or self.task is None:
             return
-
-        # Blocked so this programmatic update doesn't rebase the elapsed-
-        # minutes accumulator via _on_timesheet_slider_changed, which would
-        # discard the fractional progress between half-hour steps.
-        self.timesheet_slider.blockSignals(True)
-        self.timesheet_slider.setValue(units)
-        self.timesheet_slider.blockSignals(False)
-        self.timesheet_value_label.setText(f"Selected: {units / 2:.1f}h")
+        elapsed_minutes = int((time.monotonic() - self._time_tracking_start) // 60)
+        minutes = min(
+            self._time_tracking_base_minutes + elapsed_minutes,
+            self._TIME_SLIDER_MAX_MINUTES,
+        )
+        self.timesheet_slider.setValue(minutes)
 
     def _load_timesheet(self, task):
         self.timesheet_widget.setVisible(True)
@@ -681,7 +721,7 @@ class KitsuDocker(DockWidget):
         self.timesheet_slider.blockSignals(True)
         self.timesheet_slider.setValue(0)
         self.timesheet_slider.blockSignals(False)
-        self.timesheet_value_label.setText("Selected: 0.0h")
+        self.timesheet_value_label.setText("Selected: 0h 0m")
         self.timesheet_logged_label.setText("Logged today: checking...")
 
         try:
@@ -698,20 +738,13 @@ class KitsuDocker(DockWidget):
         person_entries = (result or {}).get(person.get("id")) or []
         minutes_today = sum(entry.get("duration") or 0 for entry in person_entries)
 
-        hours_today = minutes_today / 60
-        self.timesheet_logged_label.setText(f"Logged today: {hours_today:.1f}h")
+        self.timesheet_logged_label.setText(f"Logged today: {self._format_minutes(minutes_today)}")
 
-        # Pre-fill the slider with what's already logged, rounded to the
-        # slider's own half-hour resolution, and (re)start the auto-advance
-        # clock from this task's baseline so it climbs from what's already
-        # logged today rather than from wherever the previous task left off.
-        slider_units = min(round(hours_today * 2), self.timesheet_slider.maximum())
-        self.timesheet_slider.blockSignals(True)
-        self.timesheet_slider.setValue(slider_units)
-        self.timesheet_slider.blockSignals(False)
-        self.timesheet_value_label.setText(f"Selected: {slider_units / 2:.1f}h")
-        self._timesheet_elapsed_minutes = slider_units * 30
-        self._timesheet_last_tick = time.monotonic()
+        # (Re)start the auto-advance clock from this task's already-logged
+        # baseline, minute by minute, so it climbs from what's really
+        # logged today rather than from wherever the previous task left
+        # off (or from a coarse half-hour rounding of it).
+        self._start_time_tracking(minutes_today)
 
     def _on_timesheet_submit_clicked(self):
         if not (self.session and self.task):
@@ -724,8 +757,13 @@ class KitsuDocker(DockWidget):
             QMessageBox.warning(self, "Kitsu", f"Could not identify the current user: {exc}")
             return
 
-        hours = self.timesheet_slider.value() / 2
-        minutes = int(hours * 60)
+        # The slider itself only snaps to _TIME_SLIDER_STEP_MINUTES when
+        # dragged by hand -- the auto-advance timer sets it minute-by-minute
+        # (see _on_timesheet_tick), so a Submit click mid-tick could
+        # otherwise submit an odd value like 80, which Kitsu's web
+        # timesheet then shows as a repeating decimal ("1.3333333h").
+        step = self._TIME_SLIDER_STEP_MINUTES
+        minutes = round(self.timesheet_slider.value() / step) * step
         today = datetime.date.today().isoformat()
 
         try:
@@ -734,8 +772,8 @@ class KitsuDocker(DockWidget):
             QMessageBox.warning(self, "Kitsu", f"Could not submit time: {exc}")
             return
 
-        self.timesheet_logged_label.setText(f"Logged today: {hours:.1f}h")
-        self._set_status(f"Submitted {hours:.1f}h for today.")
+        self.timesheet_logged_label.setText(f"Logged today: {self._format_minutes(minutes)}")
+        self._set_status(f"Submitted {self._format_minutes(minutes)} for today.")
 
     def _load_comments(self):
         self.comments_list.clear()
