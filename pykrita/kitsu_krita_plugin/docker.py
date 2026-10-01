@@ -11,6 +11,7 @@ from PyQt5.QtWidgets import (
     QCheckBox,
     QComboBox,
     QFormLayout,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -30,7 +31,13 @@ from krita import DockWidget, Krita, InfoObject
 from . import settings
 from .annotations import picture_annotation_objects, render_annotations
 from .collapsible_section import CollapsibleSection
-from .kitsu_api import KitsuConnectionError, KitsuSession
+from .kitsu_api import (
+    KitsuConnectionError,
+    KitsuSession,
+    TwoFactorRequired,
+    WrongTwoFactorCode,
+    two_factor_prompt,
+)
 from .task_detection import TaskDetectionError, TaskTypeMismatch, detect_task
 from .versioning import parse_version_number
 
@@ -49,6 +56,7 @@ class KitsuDocker(DockWidget):
         self._attachment_cache = {}  # attachment id -> local file path
         self._preview_cache = {}  # preview (revision) id -> local file path
         self._pending_publish_images = []  # image paths queued to publish (first = main preview, rest = variations)
+        self._two_factor_methods = []  # set once login raises TwoFactorRequired
 
         # Timesheet auto-advance: while active, the slider auto-advances
         # from `_time_tracking_base_minutes` (today's already-logged time
@@ -126,6 +134,10 @@ class KitsuDocker(DockWidget):
         form.addRow("Project ID", self.project_id_edit)
         form.addRow("API token", self.token_edit)
 
+        # Only shown once the server has said this account needs a 2FA
+        # code (see _show_two_factor / TwoFactorRequired).
+        form.addRow(self._build_two_factor_group())
+
         self.login_button = QPushButton("Login")
         self.login_button.clicked.connect(self._on_login_clicked)
         form.addRow(self.login_button)
@@ -139,6 +151,38 @@ class KitsuDocker(DockWidget):
         form.addRow(self.user_thumbnail_label)
 
         return group
+
+    _TWO_FACTOR_LABELS = {
+        "totp": "Authenticator App",
+        "email_otp": "Email Code",
+        "recovery_code": "Recovery Code",
+    }
+
+    def _build_two_factor_group(self):
+        self.two_factor_group = QGroupBox("Two-Factor Authentication")
+        form = QFormLayout(self.two_factor_group)
+
+        self.two_factor_method_label = QLabel("Method")
+        self.two_factor_method_combo = QComboBox()
+        self.two_factor_method_combo.setToolTip("Which two-factor method to enter a code for")
+        self.two_factor_method_combo.currentIndexChanged.connect(
+            self._on_two_factor_method_changed
+        )
+        form.addRow(self.two_factor_method_label, self.two_factor_method_combo)
+
+        self.two_factor_code_edit = QLineEdit()
+        self.two_factor_code_edit.setToolTip(
+            "Two-factor authentication code (only asked for when your account has 2FA enabled)"
+        )
+        form.addRow("Code", self.two_factor_code_edit)
+
+        self.send_email_code_button = QPushButton("Send Code")
+        self.send_email_code_button.setToolTip("Email a new two-factor code to this account")
+        self.send_email_code_button.clicked.connect(self._on_send_email_code_clicked)
+        form.addRow(self.send_email_code_button)
+
+        self.two_factor_group.setVisible(False)
+        return self.two_factor_group
 
     def _build_task_group(self):
         group = QWidget()
@@ -382,23 +426,99 @@ class KitsuDocker(DockWidget):
             QMessageBox.warning(self, "Kitsu", "Please enter an email/password or an API token.")
             return
 
+        # Only sent once the server has asked for it (TwoFactorRequired below).
+        two_factor_method = None
+        two_factor_code = None
+        if self._two_factor_methods and not token:
+            two_factor_method = self.two_factor_method_combo.currentData()
+            two_factor_code = self.two_factor_code_edit.text().strip()
+            if not two_factor_code:
+                self._set_status("Enter your two-factor code.", is_error=True)
+                return
+
         self._set_status("Connecting...")
         try:
             session = KitsuSession(server_url)
             if token:
                 session.login_with_token(token)
             else:
-                session.login(email, password)
+                session.login(email, password, two_factor_method, two_factor_code)
             project = session.project(project_id)
+        except TwoFactorRequired as exc:
+            # Password was right — reveal the code field and ask again.
+            self._show_two_factor(exc.methods, exc.preferred)
+            self._set_status(str(exc))
+            return
+        except WrongTwoFactorCode as exc:
+            self.two_factor_code_edit.clear()
+            self._set_status(str(exc), is_error=True)
+            return
         except KitsuConnectionError as exc:
+            self._hide_two_factor()
             self._set_status(str(exc), is_error=True)
             return
         except Exception as exc:
+            self._hide_two_factor()
             self._set_status(f"Unexpected error: {exc}", is_error=True)
             return
 
         self.password_edit.clear()
+        self._hide_two_factor()
         self._on_authenticated(session, project, project_id)
+
+    def _show_two_factor(self, methods, preferred):
+        combo = self.two_factor_method_combo
+        combo.blockSignals(True)  # selecting the preferred method isn't a user switch
+        combo.clear()
+        for method in methods:
+            combo.addItem(self._TWO_FACTOR_LABELS.get(method, method), method)
+        combo.setCurrentIndex(max(0, combo.findData(preferred)))
+        combo.blockSignals(False)
+
+        show_method = len(methods) > 1
+        self.two_factor_method_label.setVisible(show_method)
+        combo.setVisible(show_method)
+        self.two_factor_code_edit.clear()
+        self._update_send_email_code_visibility()
+        self._two_factor_methods = list(methods)
+        self.two_factor_group.setVisible(True)
+        self.login_button.setText("Verify & Log In")
+
+    def _hide_two_factor(self):
+        self._two_factor_methods = []
+        self.two_factor_group.setVisible(False)
+        self.two_factor_code_edit.clear()
+        self.login_button.setText("Login")
+
+    def _update_send_email_code_visibility(self):
+        self.send_email_code_button.setVisible(
+            self.two_factor_method_combo.currentData() == "email_otp"
+        )
+
+    def _on_two_factor_method_changed(self, _index):
+        method = self.two_factor_method_combo.currentData()
+        self._update_send_email_code_visibility()
+        # Switching to email doesn't send anything by itself — the Send
+        # Code button does that, so a stray click can't spam the inbox.
+        if method == "email_otp":
+            self._set_status("Click Send Code, then enter the emailed code and log in again.")
+        else:
+            self._set_status(two_factor_prompt(method))
+
+    def _on_send_email_code_clicked(self):
+        server_url = self.server_edit.text().strip()
+        email = self.email_edit.text().strip()
+        if not (server_url and email):
+            self._set_status("Enter the server URL and email first.", is_error=True)
+            return
+
+        self._set_status("Sending code...")
+        try:
+            KitsuSession(server_url).send_email_code(email)
+        except Exception as exc:
+            self._set_status(str(exc), is_error=True)
+            return
+        self._set_status(two_factor_prompt("email_otp"))
 
     def _on_authenticated(self, session, project, project_id, restored=False):
         self.session = session
