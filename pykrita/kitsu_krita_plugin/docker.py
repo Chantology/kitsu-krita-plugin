@@ -5,8 +5,8 @@ import os
 import tempfile
 import time
 
-from PyQt5.QtCore import QByteArray, Qt, QTimer
-from PyQt5.QtGui import QImage, QPixmap
+from PyQt5.QtCore import QByteArray, QEvent, Qt, QTimer
+from PyQt5.QtGui import QImage, QPalette, QPixmap
 from PyQt5.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -57,6 +57,7 @@ class KitsuDocker(DockWidget):
         self._preview_cache = {}  # preview (revision) id -> local file path
         self._pending_publish_images = []  # image paths queued to publish (first = main preview, rest = variations)
         self._two_factor_methods = []  # set once login raises TwoFactorRequired
+        self._status_is_error = None  # None until a status message is shown
 
         # Timesheet auto-advance: while active, the slider auto-advances
         # from `_time_tracking_base_minutes` (today's already-logged time
@@ -386,8 +387,27 @@ class KitsuDocker(DockWidget):
 
     def _set_status(self, message, is_error=False):
         self.status_label.setText(message)
-        color = "#b00020" if is_error else "#0b7a0b"
+        self._status_is_error = is_error
+        self._apply_status_color()
+
+    def _apply_status_color(self):
+        # Krita ships both dark and bright themes. The dark #0b7a0b/#b00020
+        # read well on bright ones but nearly vanish on the default dark
+        # theme (~1.8:1 contrast), so dark backgrounds get light variants.
+        dark_background = self.palette().color(QPalette.Window).lightness() < 128
+        if self._status_is_error:
+            color = "#ff9999" if dark_background else "#b00020"
+        else:
+            color = "#81c784" if dark_background else "#0b7a0b"
         self.status_label.setStyleSheet(f"color: {color};")
+
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        # Switching Krita's theme while a status message is showing.
+        # getattr: a palette change can arrive during DockWidget.__init__,
+        # before this attribute exists.
+        if event.type() == QEvent.PaletteChange and getattr(self, "_status_is_error", None) is not None:
+            self._apply_status_color()
 
     # ---- actions ----
 
