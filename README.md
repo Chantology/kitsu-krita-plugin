@@ -159,9 +159,19 @@ remembered per section across Krita restarts.
      only needed if two episodes reuse the same sequence name; if
      sequence names are unique in your project, the plain 3-level shot
      path already resolves correctly without it.
-   - If neither matches, the error message names exactly what was
-     checked (asset types, sequences, episodes) so you can tell which
-     folder level is off.
+   - If neither matches, the dock shows a **task picker** instead of just
+     failing, along with a message naming exactly what was checked (asset
+     types, sequences, episodes). The picker also appears when the asset or
+     shot was found but its task-type folder matches no task in Kitsu. It
+     has cascading **Episode → Sequence → Shot** dropdowns (the episode row
+     only appears for projects with episodes) and a **Task Type**
+     dropdown; for an asset whose task type didn't match, only the Task
+     Type row is shown. **Change Task...** opens the same picker at any
+     time, so you can switch to a different shot or task type by hand.
+   - Manual picks are remembered for that exact file path. They take
+     precedence over folder detection on later Detect Task clicks, and the
+     breadcrumb is marked "(set manually)". **Reset to Folder Detection**
+     in the picker forgets them.
    - Once a task is detected, its **status** and **due date** show below
      it (if set on Kitsu), along with a **timesheet**: a slider from 0 to
      12 hours (in 0.5h steps) plus 1h/4h/8h preset buttons, pre-filled

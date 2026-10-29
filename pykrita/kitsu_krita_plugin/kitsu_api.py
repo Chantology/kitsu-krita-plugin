@@ -247,6 +247,17 @@ class KitsuSession:
     def get_shot_by_name(self, sequence, name):
         return self.gazu.shot.get_shot_by_name(sequence, name, client=self.client)
 
+    # Bulk lookups for the manual shot picker, used when a document's folder
+    # structure doesn't map onto Kitsu's episode/sequence/shot names.
+    def all_episodes_for_project(self, project):
+        return self.gazu.shot.all_episodes_for_project(project, client=self.client)
+
+    def all_sequences_for_project(self, project):
+        return self.gazu.shot.all_sequences_for_project(project, client=self.client)
+
+    def all_shots_for_project(self, project):
+        return self.gazu.shot.all_shots_for_project(project, client=self.client)
+
     def get_task_by_entity(self, entity, task_type):
         return self.gazu.task.get_task_by_entity(entity, task_type, client=self.client)
 

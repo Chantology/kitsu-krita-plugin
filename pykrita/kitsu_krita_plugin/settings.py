@@ -46,21 +46,48 @@ def save_section_collapsed(name, collapsed):
     settings.setValue(f"section_collapsed_{name}", collapsed)
 
 
-def _task_type_override_key(document_path):
+def _override_key(kind, document_path):
     digest = hashlib.sha1(document_path.encode("utf-8")).hexdigest()
-    return f"task_type_override_{digest}"
+    return f"{kind}_override_{digest}"
+
+
+def _load_override(kind, document_path):
+    settings = QSettings(_ORG, _APP)
+    value = settings.value(_override_key(kind, document_path), "", type=str)
+    return value or None
+
+
+def _save_override(kind, document_path, entity_id):
+    settings = QSettings(_ORG, _APP)
+    settings.setValue(_override_key(kind, document_path), entity_id)
+    settings.sync()
 
 
 def load_task_type_override(document_path):
     """Return the manually-picked task-type id remembered for this exact
     file path, or None if there isn't one (e.g. never set, or the file
     was since renamed/moved — falls back to normal folder detection)."""
-    settings = QSettings(_ORG, _APP)
-    value = settings.value(_task_type_override_key(document_path), "", type=str)
-    return value or None
+    return _load_override("task_type", document_path)
 
 
 def save_task_type_override(document_path, task_type_id):
+    _save_override("task_type", document_path, task_type_id)
+
+
+def load_shot_override(document_path):
+    """Return the manually-picked shot id remembered for this exact file
+    path, or None — same lifetime rules as load_task_type_override."""
+    return _load_override("shot", document_path)
+
+
+def save_shot_override(document_path, shot_id):
+    _save_override("shot", document_path, shot_id)
+
+
+def clear_overrides(document_path):
+    """Forget both manual picks for this file, so detection goes back to
+    reading its folders."""
     settings = QSettings(_ORG, _APP)
-    settings.setValue(_task_type_override_key(document_path), task_type_id)
+    for kind in ("shot", "task_type"):
+        settings.remove(_override_key(kind, document_path))
     settings.sync()
