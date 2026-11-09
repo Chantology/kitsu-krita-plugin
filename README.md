@@ -24,7 +24,7 @@ pykrita/
   kitsu_krita_plugin/            # the plugin package
     __init__.py
     kitsu_krita_plugin.py        # registers the dock widget + menu entry with Krita
-    extension.py                 # adds the "Kitsu/Zou" menu entry
+    extension.py                 # adds the "Kitsu" menu entry
     docker.py                    # the dock's UI (login, task, feedback, publish)
     collapsible_section.py       # collapsible header used for each dock section
     kitsu_api.py                 # wraps vendored gazu for login/tasks/comments
@@ -83,7 +83,7 @@ instead, e.g. `install_linux.sh /path/to/your/pykrita`.
    "Kitsu Krita Plugin" (its description panel should show this plugin's
    manual), and restart Krita once more for the change to take effect.
 5. After restarting, the plugin is reachable two ways:
-   - A **"Kitsu/Zou"** entry in the main menu bar, next to Help.
+   - A **"Kitsu"** entry in the main menu bar, next to Help.
    - **Settings → Dockers → Kitsu**.
 
    Enabling a plugin in the Plugin Manager does not open anything by

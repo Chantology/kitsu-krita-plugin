@@ -1,4 +1,4 @@
-"""Adds a "Kitsu/Zou" menu entry next to Help that shows/raises the dock.
+"""Adds a "Kitsu" menu entry next to Help that shows/raises the dock.
 
 The dock itself is already registered via a DockWidgetFactory (see
 kitsu_krita_plugin.py) and reachable through Settings > Dockers > Kitsu,
@@ -20,7 +20,7 @@ class KitsuExtension(Extension):
     def createActions(self, window):
         # menu="" avoids Krita also placing it under a default submenu
         # (e.g. Tools/Scripts) — addAction below puts it top-level instead.
-        action = window.createAction("kitsu_open_docker", "Kitsu/Zou", "")
+        action = window.createAction("kitsu_open_docker", "Kitsu", "")
         # Deliberately not capturing `window` here: Krita can tear down and
         # recreate its Window wrapper between now and whenever the action
         # is actually clicked, which leaves a captured reference pointing

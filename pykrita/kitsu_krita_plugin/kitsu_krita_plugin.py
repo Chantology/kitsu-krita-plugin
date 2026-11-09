@@ -7,7 +7,7 @@ of being hidden (run krita.com from a command prompt to see it on
 Windows).
 
 The dock is reachable via Settings > Dockers > Kitsu once registered, and
-also via the "Kitsu/Zou" menu entry added by KitsuExtension for
+also via the "Kitsu" menu entry added by KitsuExtension for
 discoverability.
 """
 
